@@ -1,16 +1,17 @@
 import os
 import time
 import logging
+import pyautogui
+import pyperclip
 from src.automation import WhatsAppAutomation
 from src.utils import ChatAnalyzer
 from src.database.memory import MemoryManager
 from src.analyzer import ConversationAnalyzer
 from src.safety import SafetyGuard
+from src.config import settings
 
 MY_NAME = "Vishakha~4✨"
 
-# Map get_last_message to extract_last_message in ChatAnalyzer
-ChatAnalyzer.get_last_message = ChatAnalyzer.extract_last_message
 
 class AutoReplyAssistant:
     """
@@ -40,55 +41,49 @@ class AutoReplyAssistant:
         """
         Executes one complete check-and-reply cycle.
         """
-        logging.info("Starting new chat analysis cycle...")
-
-        # Step 2: Copy the latest chat
-        automation = self.automation
-        chat_history = automation.copy_chat_history()
+        # Step 4: Copy Chat
+        chat_history = self.automation.copy_chat_history()
+        logging.info("Chat copied")
         
-        # Extract the last message dynamically
-        analyzer = self.chat_utils
-        last_message = analyzer.get_last_message(chat_history)
-        
-        sender = last_message["sender"]
+        # Step 5: Extract last sender dynamically
+        last_message = self.chat_utils.get_last_message(chat_history)
+        contact_name = last_message["sender"]
         message_body = last_message["message"]
         
-        if not sender or not message_body:
+        if not contact_name or not message_body:
             logging.info("No valid messages found in the active chat area.")
             return
 
-        # Step 4: Ignore my own messages
-        if last_message["sender"] == MY_NAME:
-            # Ignore my own message
+        logging.info(f"Current chat: {contact_name}")
+
+        # Step 6: Ignore if sender == MY_NAME
+        if contact_name == MY_NAME:
+            logging.info(f"Last message was sent by '{contact_name}' (myself). Ignoring.")
             return
 
-        # Step 5: Generate message ID for duplicate checking
+        # Generate message ID for duplicate checking
         message_id = self.chat_utils.generate_message_id(chat_history)
-
-        # Step 5 (continued): Ignore duplicate messages using message ID
         if self.chat_utils.is_duplicate_message(message_id, self.last_processed_message_id):
             logging.debug("Latest message is a duplicate (already processed). Ignoring.")
             return
 
-        logging.info(f"New incoming message from '{sender}': '{message_body}'")
-
-        # Step 6: Load the user's profile from SQLite
-        user_profile = self.memory.get_user(sender)
+        # Step 7: Load memory from SQLite
+        user_profile = self.memory.get_user(contact_name)
         if not user_profile:
-            logging.info(f"No existing database profile found for '{sender}'. Registering defaults.")
+            logging.info(f"No existing database profile found for '{contact_name}'. Registering defaults.")
             # Set default preferences: English, Casual
-            self.memory.save_or_update_user(sender, language="English", tone="Casual")
-            user_profile = self.memory.get_user(sender)
+            self.memory.save_or_update_user(contact_name, language="English", tone="Casual")
+            user_profile = self.memory.get_user(contact_name)
             
         logging.info(f"User profile context loaded: {user_profile}")
 
-        # Step 7: Detect language and emotion
+        # Step 8: Gemini analysis (language/sentiment detection) and Reply generation
+        logging.info("Generating reply")
         analysis = self.analyzer.analyze(message_body, relationship="friend")
         detected_lang = analysis.get("language", "English")
         detected_emotion = analysis.get("emotion", "Neutral")
         logging.info(f"Profile analysis complete. Language: '{detected_lang}', Emotion: '{detected_emotion}'")
 
-        # Step 8: Generate three reply options (casual, funny, professional)
         reply_options = self.safety.generate_three_replies(chat_history, user_profile)
         casual_reply = reply_options.get("casual")
         
@@ -98,20 +93,38 @@ class AutoReplyAssistant:
             
         logging.info(f"Generated reply candidates: {reply_options}")
 
-        # Step 9: Run SafetyGuard checks on the candidate reply
+        # Step 9: Safety check
         logging.info(f"Running SafetyGuard evaluation on candidate reply: '{casual_reply}'")
         risk_result = self.safety.check_risk(casual_reply)
         is_safe = self.safety.should_send(risk_result)
 
-        # Step 10: If safe, automatically send the Casual reply
         if is_safe:
-            logging.info(f"Safety status: SAFE. Sending casual reply to '{sender}'...")
+            # Step 10: Focus input
             self.automation.focus_message_box()
-            self.automation.send_message(casual_reply)
             
-            # Step 11: Save the conversation into SQLite
-            self.memory.save_conversation(sender, message_body, casual_reply)
-            logging.info(f"Conversation saved to database for user '{sender}'.")
+            # Step 11: Paste
+            pyperclip.copy(casual_reply)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.3)
+            
+            # Step 12: Enter
+            pyautogui.press("enter")
+            time.sleep(0.5)
+            
+            # Step 13: If Enter fails -> click send button
+            try:
+                send_pos = pyautogui.locateOnScreen(str(settings.SEND_BUTTON), confidence=0.85)
+                if send_pos is not None:
+                    logging.warning("Enter key failed to send. Clicking the send button...")
+                    self.automation.click_send_button()
+            except Exception as e:
+                logging.error(f"Error checking send button visibility: {e}")
+
+            logging.info("Message sent")
+            
+            # Step 14: Save SQLite
+            self.memory.save_conversation(contact_name, message_body, casual_reply)
+            logging.info("Conversation saved")
         else:
             logging.warning(
                 f"Safety status: BLOCKED. Reply violated safety policies.\n"
@@ -131,12 +144,19 @@ class AutoReplyAssistant:
         # Pull check interval from environment settings
         polling_interval = float(os.getenv("POLLING_INTERVAL_SECONDS", "5.0"))
         
-        # Step 1: Open WhatsApp Web/App window
+        # Step 1: Open Chrome, Step 2: Verify WhatsApp Tab, Step 3: Wait for user to select chat
         try:
-            self.automation.open_whatsapp()
+            self.automation.open_chrome()
+            logging.info("Chrome activated")
+            
+            self.automation.verify_whatsapp_tab()
+            logging.info("WhatsApp tab detected")
+            
+            self.automation.wait_for_user_chat_selection()
+            logging.info("Waiting for user chat selection")
         except Exception as e:
-            logging.error(f"Failed to focus/open WhatsApp: {e}")
-            # Continue running in case the chat window is already visible/active
+            logging.critical(f"Initialization failed: {e}", exc_info=True)
+            return
 
         logging.info(f"Daemon started. Polling every {polling_interval} seconds.")
         
@@ -152,6 +172,7 @@ class AutoReplyAssistant:
                 
             # Wait for the next check interval
             time.sleep(polling_interval)
+
 
 if __name__ == "__main__":
     # Configure standardized logging output structure
