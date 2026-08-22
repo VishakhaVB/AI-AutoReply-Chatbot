@@ -44,12 +44,12 @@ class VisionAnalyzer:
     providing classification, descriptions, and text extraction (OCR).
     """
 
-    def __init__(self, model_name: str = "gemini-2.5-flash") -> None:
+    def __init__(self, model_name: str = "gemini-3.6-flash") -> None:
         """
         Initializes the VisionAnalyzer.
         
         Args:
-            model_name (str): Model name to execute vision analysis. Defaults to 'gemini-2.5-flash'.
+            model_name (str): Model name to execute vision analysis. Defaults to 'gemini-3.6-flash'.
         """
         api_key = get_api_key()
         self.client = genai.Client(api_key=api_key)

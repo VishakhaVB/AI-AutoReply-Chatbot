@@ -68,12 +68,12 @@ class ConversationAnalyzer:
     and suggest response styling. Output structures are validated using Pydantic.
     """
 
-    def __init__(self, model_name: str = "gemini-2.5-flash") -> None:
+    def __init__(self, model_name: str = "gemini-3.6-flash") -> None:
         """
         Initializes the Gemini client with the local API key settings.
         
         Args:
-            model_name (str): Model version to target. Defaults to 'gemini-2.5-flash'.
+            model_name (str): Model version to target. Defaults to 'gemini-3.6-flash'.
         """
         api_key = get_api_key()
         self.client = genai.Client(api_key=api_key)

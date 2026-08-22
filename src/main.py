@@ -7,6 +7,11 @@ from src.database.memory import MemoryManager
 from src.analyzer import ConversationAnalyzer
 from src.safety import SafetyGuard
 
+MY_NAME = "Vishakha~4✨"
+
+# Map get_last_message to extract_last_message in ChatAnalyzer
+ChatAnalyzer.get_last_message = ChatAnalyzer.extract_last_message
+
 class AutoReplyAssistant:
     """
     Coordinates the execution flow of the AI chatbot:
@@ -38,25 +43,27 @@ class AutoReplyAssistant:
         logging.info("Starting new chat analysis cycle...")
 
         # Step 2: Copy the latest chat
-        chat_history = self.automation.copy_chat_history()
+        automation = self.automation
+        chat_history = automation.copy_chat_history()
         
-        # Step 3: Extract the last message
-        last_message = self.chat_utils.extract_last_message(chat_history)
-        sender = last_message.get("sender")
-        message_body = last_message.get("message")
+        # Extract the last message dynamically
+        analyzer = self.chat_utils
+        last_message = analyzer.get_last_message(chat_history)
+        
+        sender = last_message["sender"]
+        message_body = last_message["message"]
         
         if not sender or not message_body:
             logging.info("No valid messages found in the active chat area.")
             return
 
+        # Step 4: Ignore my own messages
+        if last_message["sender"] == MY_NAME:
+            # Ignore my own message
+            return
+
         # Step 5: Generate message ID for duplicate checking
         message_id = self.chat_utils.generate_message_id(chat_history)
-
-        # Step 4: Ignore my own messages
-        my_name = os.getenv("MY_NAME", "Me")
-        if self.chat_utils.is_last_message_from_user(chat_history, my_name):
-            logging.info(f"Last message was sent by '{sender}' (myself). Ignoring.")
-            return
 
         # Step 5 (continued): Ignore duplicate messages using message ID
         if self.chat_utils.is_duplicate_message(message_id, self.last_processed_message_id):
