@@ -1,38 +1,49 @@
 # AI-AutoReply-Chatbot
 
-A production-quality Python automation framework designed to monitor chat logs, generate contextual, personality-driven AI replies using Google's Gemini Models, and automatically paste the replies back into messaging windows.
+A production-quality, modular Python automation and artificial intelligence framework. The bot monitors chat windows on WhatsApp Web, persists profiles in SQLite, detects user emotion and language, generates tone-based safe reply alternatives using Google Gemini, and performs vision/local audio speech processing.
 
 ---
 
 ## 🌟 Project Overview
 
-**AI-AutoReply-Chatbot** acts as an autonomous chat companion. By combining desktop automation techniques (using PyAutoGUI and Pyperclip) with Google's advanced Gemini Large Language Models, the bot identifies incoming messages, interprets the conversational flow, and sends responses.
+**AI-AutoReply-Chatbot** acts as an autonomous assistant. By combining GUI coordinate automation, localized database history tracking, sentiment classifier analysis, Whisper local speech models, and Google's Gemini LLMs, the bot handles incoming text, image, and speech inputs with safety guardrails and personalized responses.
 
 ## ✨ Key Features
 
-- **Automated Desktop Interaction**: Directly interacts with web interfaces or desktop applications via GUI coordinate tracking and simulated typing.
-- **Dynamic AI Response Generation**: Integrates with the official Google Gen AI SDK to produce replies using the `gemini-2.5-flash` model.
-- **Robust Configuration Management**: Implements structured configurations via a unified `settings.py` module backed by `python-dotenv`.
-- **Zero-Hardcoding Security**: Environment variable separation ensures API keys and secrets are never committed to version control.
-- **Clean Architecture**: Designed with modular components representing configuration, automation, utilities, and AI reasoning.
+- **Daemon Automation Loop (`main.py`)**: Runs a robust background thread that regularly checks chat history, ignoring duplicate messages and self-messages.
+- **WhatsApp GUI Controller (`automation.py`)**: Simulates user desktop mouse clicks and copy-paste routines via PyAutoGUI and Pyperclip.
+- **Gemini Content Generator (`ai_reply.py`)**: Harnesses Gemini 2.5 Flash to generate responses.
+- **Regex Chat Parser (`utils.py`)**: Extracts timestamps, sender names, and multiline message contents from copied chat history using robust regexes and hashes them for deduplication.
+- **SQLite Memory Manager (`database/memory.py`)**: Tracks user preference profiles (language, tone, running summary) and records conversation context in a local database.
+- **Multimodal Sentiment Classifier (`analyzer.py`)**: Detects sender language (English, Hindi, Marathi, Hinglish) and emotion (Happy, Sad, Angry, Excited, Neutral, Stressed).
+- **Safety Checker & Reply Multi-Toner (`safety.py`)**: Filters incoming/outgoing text for toxicity/PII and generates three response options (casual, funny, professional).
+- **Local Vision Analyzer (`vision.py`)**: Inspects local image files using Gemini's visual intelligence, categorizing image types (Handwritten, Meme, etc.), generating descriptions, and extracting text.
+- **Whisper Speech Processor (`audio/speech.py`)**: Runs local OpenAI Whisper models to transcribe audio inputs (MP3, WAV, OGG) and detect spoken languages, with custom preprocessing handled via `ffmpeg`.
 
 ## 📂 Project Structure
 
 ```text
 AI-AutoReply-Chatbot/
 ├── src/
+│   ├── audio/
+│   │   └── speech.py           # Whisper transcription and language detection with ffmpeg preprocessing
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── settings.py         # Loads configuration and validates GEMINI_API_KEY
-│   ├── ai_reply.py             # Interfaces with the Google Gemini API (GeminiReplyGenerator)
-│   ├── automation.py           # Handles mouse movements, keyboard simulation, clipboard (Placeholder/Planned)
-│   ├── utils.py                # Helper utilities (Placeholder/Planned)
-│   └── main.py                 # Application entrypoint coordinating automation and AI logic
-├── .env                        # Local environment settings (ignored by Git)
-├── .env.example                # Template for required environment variables
-├── .gitignore                  # Keeps virtual environments, secrets, and IDE configs untracked
-├── README.md                   # Project documentation
-└── requirements.txt            # Project dependencies
+│   │   └── settings.py         # Configures API keys and loads .env properties
+│   ├── database/
+│   │   └── memory.py           # SQLite local storage for user preferences and message logs
+│   ├── ai_reply.py             # Reusable Gemini response generation class
+│   ├── analyzer.py             # Classifies message language, emotion, and recommended style
+│   ├── automation.py           # Controls keyboard/mouse copy-paste sequences
+│   ├── main.py                 # Core orchestration bot loop running every 5 seconds
+│   ├── safety.py               # Inspects content risks and generates casual/funny/formal replies
+│   ├── utils.py                # Regex extraction and SHA-256 message ID hashing
+│   └── vision.py               # Image category detector, describer, and OCR
+├── .env                        # Local settings and Gemini secrets (ignored by Git)
+├── .env.example                # Template settings for setting up environment variables
+├── .gitignore                  # Prevents committing dependencies, DB files, and key files
+├── README.md                   # Project documentation documentation
+└── requirements.txt            # Python dependencies (Pillow, openai-whisper, google-genai, etc.)
 ```
 
 ## 🛠️ Installation & Setup
@@ -40,7 +51,8 @@ AI-AutoReply-Chatbot/
 ### Prerequisites
 
 - **Python 3.9+**
-- Visual capabilities (this framework relies on desktop screen interaction; running in headless environments requires virtual displays)
+- **ffmpeg** installed on the system and configured in the system PATH.
+- Visual display (required for PyAutoGUI mouse coordinate control).
 
 ### 1. Clone the Repository
 ```bash
@@ -49,7 +61,6 @@ cd AI-AutoReply-Chatbot
 ```
 
 ### 2. Set Up a Virtual Environment
-It is highly recommended to isolate dependencies using a virtual environment:
 ```bash
 # Windows
 python -m venv .venv
@@ -67,42 +78,25 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure Environment Variables
-Create a file named `.env` in the root of the project using the structure from `.env.example`:
-
+Copy `.env.example` into a new file named `.env` and fill in your details:
 ```env
-# Debug Mode (True/False)
 DEBUG=True
-
-# Gemini API Key (Required for chat response generation)
-# Obtain your key from: https://aistudio.google.com
 GEMINI_API_KEY=your_gemini_api_key_here
-
-# Configuration Settings
+MY_NAME=Me
 POLLING_INTERVAL_SECONDS=5.0
-TARGET_SENDER_NAME=Rohan Das
 ```
 
 ---
 
-## 🚀 Usage
+## 🚀 Running the Bot
 
-Since the system interacts with the GUI, prepare the target chat screen (e.g., web-browser messenger) in the correct desktop coordinates before executing:
+To start the auto-reply daemon, align your WhatsApp Web window on screen matching the coordinates specified in `src/automation.py`, then run:
 
 ```bash
 python src/main.py
 ```
 
-*Note: Coordinates and interaction coordinates are configured in `src/main.py` and can be adjusted depending on screen resolution.*
-
----
-
-## 🗺️ Future Roadmap
-
-- [ ] **Cross-Platform API Integrations**: Transition from GUI coordinates (`pyautogui`) to official APIs/Headless wrappers for platforms like WhatsApp, Discord, or Telegram.
-- [ ] **Adaptive Coordinates Engine**: Automatically locate messaging inputs using OpenCV computer vision instead of hardcoded coordinates.
-- [ ] **Enhanced Personality Profiles**: Support for multiple selectable personality templates (e.g., professional, sarcastic, educational).
-- [ ] **Database Logging**: Log message history and model tokens for analysis, auditing, and fine-tuning.
-- [ ] **Web Dashboard**: Provide a visual interface to manage targets, edit prompts, and view active chatbot logs.
+*Note: Screen coordinates are fully configurable via class variables inside `src/automation.py`.*
 
 ---
 

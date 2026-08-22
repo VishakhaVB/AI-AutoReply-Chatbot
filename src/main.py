@@ -2,113 +2,159 @@ import os
 import time
 import logging
 from src.automation import WhatsAppAutomation
-from src.ai_reply import GeminiReplyGenerator
 from src.utils import ChatAnalyzer
+from src.database.memory import MemoryManager
+from src.analyzer import ConversationAnalyzer
+from src.safety import SafetyGuard
 
-class AutoReplyBot:
+class AutoReplyAssistant:
     """
-    Coordinates chat automation, history analysis, and AI response generation.
-    
-    Periodically polls the chat window, checks for new incoming messages from
-    other users, and automatically sends AI-generated replies using Gemini.
+    Coordinates the execution flow of the AI chatbot:
+    - Screen interaction via desktop GUI automation
+    - Text extraction and semantic parsing
+    - SQLite persistence of user preferences and chat history
+    - Sentiment and language classification
+    - Safe generation and dispatch of replies
     """
 
     def __init__(self) -> None:
         """
-        Initializes the bot, instantiating the required subsystem modules.
+        Initializes the assistant and instantiates its supporting subsystems.
         """
-        logging.info("Initializing AutoReplyBot subsystems...")
+        logging.info("Initializing AutoReplyAssistant subsystems...")
         self.automation = WhatsAppAutomation()
-        self.generator = GeminiReplyGenerator()
-        self.analyzer = ChatAnalyzer()
+        self.chat_utils = ChatAnalyzer()
+        self.memory = MemoryManager()
+        self.analyzer = ConversationAnalyzer()
+        self.safety = SafetyGuard()
         
         # Track the last successfully replied message ID to avoid duplicate actions
         self.last_processed_message_id: str = ""
 
     def process_chat(self) -> None:
         """
-        Performs a single cycle of checking, analyzing, and replying to chat history.
+        Executes one complete check-and-reply cycle.
         """
-        # Step 1: Copy chat history to clipboard
+        logging.info("Starting new chat analysis cycle...")
+
+        # Step 2: Copy the latest chat
         chat_history = self.automation.copy_chat_history()
         
-        # Step 2: Extract details of the last message
-        last_message_info = self.analyzer.extract_last_message(chat_history)
-        sender = last_message_info.get("sender")
-        message_body = last_message_info.get("message")
+        # Step 3: Extract the last message
+        last_message = self.chat_utils.extract_last_message(chat_history)
+        sender = last_message.get("sender")
+        message_body = last_message.get("message")
         
         if not sender or not message_body:
-            logging.info("No valid messages parsed from history.")
+            logging.info("No valid messages found in the active chat area.")
             return
 
-        # Generate a unique hash for the latest message
-        message_id = self.analyzer.generate_message_id(chat_history)
-        
-        # Step 3: Ignore if it's my own message
+        # Step 5: Generate message ID for duplicate checking
+        message_id = self.chat_utils.generate_message_id(chat_history)
+
+        # Step 4: Ignore my own messages
         my_name = os.getenv("MY_NAME", "Me")
-        if self.analyzer.is_last_message_from_user(chat_history, my_name):
-            logging.info(f"Last message is from user '{sender}' (myself). Ignoring.")
+        if self.chat_utils.is_last_message_from_user(chat_history, my_name):
+            logging.info(f"Last message was sent by '{sender}' (myself). Ignoring.")
+            return
+
+        # Step 5 (continued): Ignore duplicate messages using message ID
+        if self.chat_utils.is_duplicate_message(message_id, self.last_processed_message_id):
+            logging.debug("Latest message is a duplicate (already processed). Ignoring.")
+            return
+
+        logging.info(f"New incoming message from '{sender}': '{message_body}'")
+
+        # Step 6: Load the user's profile from SQLite
+        user_profile = self.memory.get_user(sender)
+        if not user_profile:
+            logging.info(f"No existing database profile found for '{sender}'. Registering defaults.")
+            # Set default preferences: English, Casual
+            self.memory.save_or_update_user(sender, language="English", tone="Casual")
+            user_profile = self.memory.get_user(sender)
+            
+        logging.info(f"User profile context loaded: {user_profile}")
+
+        # Step 7: Detect language and emotion
+        analysis = self.analyzer.analyze(message_body, relationship="friend")
+        detected_lang = analysis.get("language", "English")
+        detected_emotion = analysis.get("emotion", "Neutral")
+        logging.info(f"Profile analysis complete. Language: '{detected_lang}', Emotion: '{detected_emotion}'")
+
+        # Step 8: Generate three reply options (casual, funny, professional)
+        reply_options = self.safety.generate_three_replies(chat_history, user_profile)
+        casual_reply = reply_options.get("casual")
+        
+        if not casual_reply:
+            logging.warning("No valid casual reply generated. Skipping cycle.")
             return
             
-        # Step 4: Ignore duplicate/already processed messages
-        if self.analyzer.is_duplicate_message(message_id, self.last_processed_message_id):
-            logging.debug("Last message is already processed. Ignoring.")
-            return
+        logging.info(f"Generated reply candidates: {reply_options}")
 
-        logging.info(f"New incoming message detected from '{sender}': '{message_body}'")
+        # Step 9: Run SafetyGuard checks on the candidate reply
+        logging.info(f"Running SafetyGuard evaluation on candidate reply: '{casual_reply}'")
+        risk_result = self.safety.check_risk(casual_reply)
+        is_safe = self.safety.should_send(risk_result)
 
-        # Step 5: Generate AI reply
-        ai_reply = self.generator.generate_reply(chat_history)
-        logging.info(f"Generated AI response: '{ai_reply}'")
+        # Step 10: If safe, automatically send the Casual reply
+        if is_safe:
+            logging.info(f"Safety status: SAFE. Sending casual reply to '{sender}'...")
+            self.automation.focus_message_box()
+            self.automation.send_message(casual_reply)
+            
+            # Step 11: Save the conversation into SQLite
+            self.memory.save_conversation(sender, message_body, casual_reply)
+            logging.info(f"Conversation saved to database for user '{sender}'.")
+        else:
+            logging.warning(
+                f"Safety status: BLOCKED. Reply violated safety policies.\n"
+                f"Classification: {risk_result.get('classification')}\n"
+                f"Reason: {risk_result.get('reason')}"
+            )
 
-        # Step 6: Send reply
-        self.automation.focus_message_box()
-        self.automation.send_message(ai_reply)
-        logging.info("AI response sent successfully.")
-
-        # Step 7: Save latest message ID to prevent infinite loops
+        # Update the processed message ID (regardless of safety result) to prevent reprocessing
         self.last_processed_message_id = message_id
 
     def run(self) -> None:
         """
-        Runs the main execution loop, polling the chat window periodically.
+        Runs the main loop checking for new chat history at regular intervals.
         """
-        logging.info("Starting AutoReplyBot loop...")
+        logging.info("Starting AutoReplyAssistant daemon service...")
         
-        # Load polling interval configuration (defaulting to 5 seconds)
+        # Pull check interval from environment settings
         polling_interval = float(os.getenv("POLLING_INTERVAL_SECONDS", "5.0"))
         
-        # Focus on the WhatsApp chat window at startup
+        # Step 1: Open WhatsApp Web/App window
         try:
             self.automation.open_whatsapp()
         except Exception as e:
-            logging.error(f"Failed to focus WhatsApp window on startup: {e}")
-            # Continue execution loop in case window is already open
+            logging.error(f"Failed to focus/open WhatsApp: {e}")
+            # Continue running in case the chat window is already visible/active
 
-        logging.info(f"AutoReplyBot is running. Polling interval: {polling_interval} seconds.")
+        logging.info(f"Daemon started. Polling every {polling_interval} seconds.")
         
         while True:
             try:
-                # Select the chat log area
+                # Select the chat window area
                 self.automation.select_chat_area()
-                # Process the selected chat log
+                # Run main parse and reply pipeline
                 self.process_chat()
             except Exception as e:
-                # Handle exceptions gracefully to prevent the loop from crashing
-                logging.error(f"Error encountered in bot run cycle: {e}", exc_info=True)
+                # Keep the loop running despite errors
+                logging.error(f"Error in execution cycle: {e}", exc_info=True)
                 
-            # Sleep until the next polling cycle
+            # Wait for the next check interval
             time.sleep(polling_interval)
 
 if __name__ == "__main__":
-    # Configure the standard logging output structure
+    # Configure standardized logging output structure
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
     
     try:
-        bot = AutoReplyBot()
-        bot.run()
+        assistant = AutoReplyAssistant()
+        assistant.run()
     except Exception as e:
-        logging.critical(f"Failed to start AutoReplyBot: {e}", exc_info=True)
+        logging.critical(f"Failed to start the AutoReplyAssistant service: {e}", exc_info=True)
