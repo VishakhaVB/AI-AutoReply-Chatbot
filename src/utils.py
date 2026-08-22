@@ -18,50 +18,73 @@ class ChatAnalyzer:
         r'(?:\[?(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[APap][Mm])?),\s(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})\]?)\s+([^:]+):\s*(.*)'
     )
 
-    def extract_last_message(self, chat_history: str) -> Dict[str, str]:
+    def extract_messages(self, chat_history: str) -> list[dict[str, str]]:
         """
-        Extracts the sender, timestamp, and text content of the most recent message.
+        Parses the entire chat history and extracts all messages.
         
-        Handles multiline messages by capturing all text trailing the last matched header.
+        Supports emojis, Marathi, Hindi, English, and multiline messages.
         
         Args:
             chat_history (str): The raw text logs copied from WhatsApp Web.
             
         Returns:
-            Dict[str, str]: A dictionary containing keys:
+            list[dict[str, str]]: A list of dictionaries containing:
+                - 'timestamp': Combined time and date.
+                - 'sender': Name of the message sender.
+                - 'message': Message body.
+        """
+        messages = []
+        if not chat_history or not chat_history.strip():
+            return messages
+
+        # Find all message headers
+        matches = list(self.MESSAGE_PATTERN.finditer(chat_history))
+        if not matches:
+            return messages
+
+        for i, match in enumerate(matches):
+            time_part = match.group(1)
+            date_part = match.group(2)
+            sender = match.group(3).strip()
+            
+            # Determine where this message's body ends
+            start_index = match.start(4)
+            if i + 1 < len(matches):
+                end_index = matches[i + 1].start()
+            else:
+                end_index = len(chat_history)
+                
+            message_content = chat_history[start_index:end_index].strip()
+            timestamp = f"{time_part}, {date_part}"
+            
+            messages.append({
+                "timestamp": timestamp,
+                "sender": sender,
+                "message": message_content
+            })
+            
+        return messages
+
+    def get_last_message(self, chat_history: str) -> dict[str, str]:
+        """
+        Extracts the sender, timestamp, and text content of the most recent message.
+        
+        Args:
+            chat_history (str): The raw text logs copied from WhatsApp Web.
+            
+        Returns:
+            dict[str, str]: A dictionary containing keys:
                 - 'timestamp': Combined date and time (e.g. "21:02, 12/6/2024") or empty string.
                 - 'sender': Name of the message sender or empty string.
                 - 'message': Body of the message or empty string.
         """
         empty_result = {"timestamp": "", "sender": "", "message": ""}
-        
-        if not chat_history or not chat_history.strip():
+        messages = self.extract_messages(chat_history)
+        if not messages:
             return empty_result
+        return messages[-1]
 
-        # Locate all message boundaries matching the standard header format
-        matches = list(self.MESSAGE_PATTERN.finditer(chat_history))
-        
-        if not matches:
-            # Safely return empty structure if the text is malformed or has no match
-            return empty_result
-
-        last_match = matches[-1]
-        time_part = last_match.group(1)
-        date_part = last_match.group(2)
-        sender = last_match.group(3).strip()
-        
-        # Capture the message content starting from the beginning of group 4 to the end of the text.
-        # This naturally collects multiline text that belongs to the last message.
-        message_content = chat_history[last_match.start(4):].strip()
-        timestamp = f"{time_part}, {date_part}"
-
-        return {
-            "timestamp": timestamp,
-            "sender": sender,
-            "message": message_content
-        }
-
-    def is_last_message_from_user(self, chat_history: str, my_name: str) -> bool:
+    def is_last_message_from_me(self, chat_history: str, my_name: str) -> bool:
         """
         Determines whether the most recent message was sent by the user (self).
         
@@ -75,8 +98,12 @@ class ChatAnalyzer:
         if not my_name:
             return False
             
-        last_message = self.extract_last_message(chat_history)
+        last_message = self.get_last_message(chat_history)
         return last_message["sender"].lower() == my_name.lower()
+
+    # Backwards-compatible aliases
+    extract_last_message = get_last_message
+    is_last_message_from_user = is_last_message_from_me
 
     def generate_message_id(self, chat_history: str) -> str:
         """
