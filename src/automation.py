@@ -2,11 +2,27 @@ import time
 import logging
 import pyautogui
 import pyperclip
+import pygetwindow as gw
+from src.config import settings
+
+
+class ChromeNotFoundError(Exception):
+    """
+    Raised when Google Chrome is not running.
+    """
+    pass
 
 
 class WhatsAppNotOpenError(Exception):
     """
     Raised when WhatsApp Web is not open/active.
+    """
+    pass
+
+
+class ChatInputNotFoundError(Exception):
+    """
+    Raised when the message input box is not found.
     """
     pass
 
@@ -17,14 +33,8 @@ class WhatsAppAutomation:
     """
 
     # -----------------------------
-    # Screen Coordinates
+    # Screen Coordinates (Keep existing drag-selection and deselect logic)
     # -----------------------------
-    # Chrome icon (taskbar)
-    CHROME_COORDINATES = (1321, 1045)
-
-    # Browser URL bar coordinates
-    URL_BAR_COORDINATES = (1113, 961)
-
     # Visible chat selection
     DRAG_START_COORDINATES = (909, 240)
     DRAG_END_COORDINATES = (1849, 912)
@@ -32,74 +42,80 @@ class WhatsAppAutomation:
     # Empty area to deselect highlighted text
     CHAT_DESELECT_COORDINATES = (909, 240)
 
-    # Message input box
-    INPUT_BOX_COORDINATES = (1113, 961)
-
-    # Send button (optional)
-    SEND_BUTTON_COORDINATES = (1870, 976)
-
     def __init__(self) -> None:
         # Keep emergency stop enabled
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.2
 
-    def verify_whatsapp_web(self) -> bool:
+    def open_chrome(self) -> None:
         """
-        Verify if WhatsApp Web is open by copying the URL in Chrome.
-
-        Returns:
-            bool: True if WhatsApp Web is open.
+        Locates the Chrome window and brings it to the foreground.
 
         Raises:
-            WhatsAppNotOpenError: If the copied URL does not contain "web.whatsapp.com".
+            ChromeNotFoundError: If Google Chrome is not running.
         """
-        logging.info("Verifying WhatsApp Web URL...")
-        
-        # 1. Click Chrome taskbar icon.
-        pyautogui.click(*self.CHROME_COORDINATES)
-        
-        # 2. Wait 1 second.
+        logging.info("Searching for Chrome window...")
+        chrome_windows = gw.getWindowsWithTitle("Chrome")
+        if not chrome_windows:
+            chrome_windows = gw.getWindowsWithTitle("Google Chrome")
+
+        if not chrome_windows:
+            raise ChromeNotFoundError("Google Chrome is not running.")
+
+        chrome_win = chrome_windows[0]
+        try:
+            if chrome_win.isMinimized:
+                chrome_win.restore()
+            chrome_win.activate()
+            logging.info("Chrome activated")
+        except Exception as e:
+            logging.warning(f"Could not activate Chrome window: {e}")
+
+        # Wait 1 second after activating
         time.sleep(1)
-        
-        # 3. Click the browser URL bar.
-        pyautogui.click(*self.URL_BAR_COORDINATES)
-        time.sleep(0.3)
-        
-        # 4. Press Ctrl + A.
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.3)
-        
-        # 5. Press Ctrl + C.
-        pyautogui.hotkey("ctrl", "c")
-        time.sleep(0.5)
-        
-        # 6. Read clipboard using pyperclip.
-        copied_url = pyperclip.paste()
-        
-        # Press escape to deselect the URL bar
-        pyautogui.press("esc")
-        time.sleep(0.3)
 
-        # 7. If the copied URL contains "web.whatsapp.com" return True.
-        if "web.whatsapp.com" in copied_url:
-            logging.info("WhatsApp Web URL verified successfully.")
+    def verify_whatsapp_tab(self) -> bool:
+        """
+        Seares for the WhatsApp Web tab using image template matching.
+
+        Returns:
+            bool: True if the tab is successfully verified and clicked.
+
+        Raises:
+            WhatsAppNotOpenError: If the WhatsApp Web tab is not found.
+        """
+        logging.info("Locating WhatsApp Web tab on screen...")
+        try:
+            tab_pos = pyautogui.locateOnScreen(str(settings.WHATSAPP_TAB), confidence=0.85)
+        except Exception as e:
+            logging.error(f"Error during locateOnScreen for whatsapp_tab.png: {e}")
+            tab_pos = None
+
+        if tab_pos is not None:
+            logging.info("WhatsApp tab detected")
+            pyautogui.click(pyautogui.center(tab_pos))
+            time.sleep(1)
             return True
-            
-        # 8. Otherwise raise exception
-        raise WhatsAppNotOpenError(
-            "WhatsApp Web is not open. Please open web.whatsapp.com and keep the chat visible."
-        )
+        else:
+            raise WhatsAppNotOpenError(
+                "WhatsApp Web tab not found. Please open WhatsApp Web in Chrome."
+            )
 
-    def open_whatsapp(self) -> None:
+    def wait_for_user_chat_selection(self) -> None:
         """
-        Bring Chrome (with WhatsApp Web) to the foreground and verify it.
+        Pauses execution and prompts the user to select the chat in WhatsApp.
         """
-        self.verify_whatsapp_web()
+        logging.info("Waiting for user chat selection")
+        print("\nWhatsApp Web detected.")
+        print("Please open any WhatsApp chat.")
+        print("Press ENTER when ready...")
+        input()
 
     def select_chat_area(self) -> None:
         """
         Highlight the visible chat messages.
         """
+        logging.info("Highlighting the chat area...")
         pyautogui.moveTo(*self.DRAG_START_COORDINATES, duration=0.2)
 
         pyautogui.dragTo(
@@ -117,6 +133,7 @@ class WhatsAppAutomation:
         Returns:
             str: Chat history text.
         """
+        logging.info("Chat copied")
         pyperclip.copy("")
 
         pyautogui.hotkey("ctrl", "c")
@@ -135,13 +152,52 @@ class WhatsAppAutomation:
     def focus_message_box(self) -> None:
         """
         Focus the WhatsApp message input.
+
+        Raises:
+            ChatInputNotFoundError: If the input box template is not found on screen.
         """
-        pyautogui.click(*self.INPUT_BOX_COORDINATES)
-        time.sleep(0.3)
+        logging.info("Locating chat input box...")
+        try:
+            input_pos = pyautogui.locateOnScreen(str(settings.CHAT_INPUT), confidence=0.85)
+        except Exception as e:
+            logging.error(f"Error locating chat_input.png: {e}")
+            input_pos = None
+
+        if input_pos is not None:
+            logging.info("Focusing input box...")
+            pyautogui.click(pyautogui.center(input_pos))
+            time.sleep(0.3)
+        else:
+            raise ChatInputNotFoundError("Message input box not found.")
+
+    def click_send_button(self) -> None:
+        """
+        Locates and clicks the WhatsApp send button.
+        """
+        logging.info("Locating and clicking send button...")
+        try:
+            send_pos = pyautogui.locateOnScreen(str(settings.SEND_BUTTON), confidence=0.85)
+        except Exception as e:
+            logging.error(f"Error locating send_button.png: {e}")
+            send_pos = None
+
+        if send_pos is not None:
+            pyautogui.click(pyautogui.center(send_pos))
+            time.sleep(0.3)
+        else:
+            logging.warning("Send button not found.")
+
+    def open_whatsapp(self) -> None:
+        """
+        Legacy compatibility wrapper.
+        """
+        self.open_chrome()
+        self.verify_whatsapp_tab()
+        self.wait_for_user_chat_selection()
 
     def send_message(self, message: str) -> None:
         """
-        Paste and send a message.
+        Pasts and sends a message, falling back to click_send_button if Enter fails.
         """
         if not message.strip():
             return
@@ -153,3 +209,13 @@ class WhatsAppAutomation:
         time.sleep(0.3)
 
         pyautogui.press("enter")
+        time.sleep(0.5)
+
+        # Fallback check
+        try:
+            send_pos = pyautogui.locateOnScreen(str(settings.SEND_BUTTON), confidence=0.85)
+            if send_pos is not None:
+                logging.warning("Enter key failed to send. Clicking the send button...")
+                self.click_send_button()
+        except Exception as e:
+            logging.error(f"Error checking send button visibility: {e}")

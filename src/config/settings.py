@@ -4,6 +4,12 @@ from dotenv import load_dotenv
 
 # Base Directory (root directory of the project where .env is located)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+ASSETS_DIR = BASE_DIR / "assets"
+
+WHATSAPP_TAB = ASSETS_DIR / "whatsapp_tab.png"
+CHAT_INPUT = ASSETS_DIR / "chat_input.png"
+SEND_BUTTON = ASSETS_DIR / "send_button.png"
 ENV_PATH = BASE_DIR / ".env"
 
 # Load environment variables
